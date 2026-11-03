@@ -1,0 +1,44 @@
+#ifndef H_CONFIG
+#define H_CONFIG
+
+// ============================================================================
+//  esp32-mcserver — 配置模板
+//
+//  复制本文件为 config.h 后再修改：
+//      cp include/config.h.example include/config.h
+//  然后填入你自己的 WiFi 信息。
+//
+//  ⚠️ config.h 已在 .gitignore 中，不会被提交，避免 WiFi 密码泄漏。
+// ============================================================================
+
+// --- WiFi（仅支持 2.4GHz，ESP32 无法连接 5GHz 网络）-----------------------
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASS "YOUR_WIFI_PASSWORD"
+
+// --- 服务器标识 -------------------------------------------------------------
+// SERVER_MOTD 显示在 Minecraft 多人游戏服务器列表中
+#define SERVER_MOTD "ESP32-S3 Minecraft Server"
+
+// --- 玩法设置 ---------------------------------------------------------------
+// 初始游戏模式：0 生存 / 1 创造 / 2 冒险 / 3 观察
+// 游戏内也可以用 !gm 命令或 TCP 控制台动态切换
+#define INITIAL_GAMEMODE 0
+
+// 渲染/模拟距离（单位：区块）。2 是安全默认值。
+// 提高会让世界看起来更大，但会显著增加 CPU（世界生成）和内存消耗。
+// 建议一次只加 1，并观察控制台 status 里的内存与 CPU。
+#define VIEW_DISTANCE 2
+
+// 最大同时在线玩家数
+#define MAX_PLAYERS 16
+
+// 创造模式破坏方块时是否也把产物放进背包。
+// 原版创造模式不掉落，这里默认关闭。想要"挖什么得什么"就取消注释。
+// #define CREATIVE_DROPS_ITEMS
+
+// 世界编辑预算：记录多少条玩家放置/破坏的方块（每条约 6 字节）。
+// 该数组放在 PSRAM，不占用内部 SRAM。
+// ⚠️ 修改此值会导致旧存档的 world.bin 无法读取（尺寸不匹配），改了要擦除重来。
+#define MAX_BLOCK_CHANGES 20000
+
+#endif

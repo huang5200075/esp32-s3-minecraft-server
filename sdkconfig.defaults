@@ -1,0 +1,72 @@
+# ESP32-S3 N16R8 defaults for bareiron Minecraft server
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16MB flash, QIO @ 80MHz
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# CONFIG_ESPTOOLPY_FLASHMODE_QIO is not set
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# 8MB octal PSRAM (the "R8" in N16R8), allow malloc() to use it
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Full speed
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Custom partition table (app + littlefs world storage)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# 1kHz tick for finer game timing
+CONFIG_FREERTOS_HZ=1000
+
+# bareiron's game loop is busy/long (worldgen ~200ms/chunk) and never yields;
+# disable the task watchdog so chunk bursts don't reset the chip.
+# ponytail: blunt but correct for this single-purpose workload. Re-enable + add
+# task_yield() in globals.h if you ever run other tasks alongside it.
+CONFIG_ESP_TASK_WDT_INIT=n
+
+# 启动阶段打印 INFO 日志，方便排查；发布时可改回 WARN
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL=3
+
+# ===== v3: WiFi / TCP 延迟调优 =====
+# 接收块聚合窗口 6 -> 16，减少停等 ACK
+# 加大缓冲，避免高吞吐时丢包重传
+# TCP 窗口 5760 -> 32KB
+# 关闭 WPA3 SAE（你的 AP 是 WPA2/WPA3 混合，SAE 会周期性重协商造成延迟尖峰）
+# CONFIG_ESP_WIFI_ENABLE_WPA3_SAE is not set
+# CONFIG_ESP_WIFI_ENABLE_SAE_PK is not set
+
+# ===== v4.2: 连接回收优化 =====
+# 每次连接关闭后 socket 在 TIME_WAIT 停留 TCP_MSL*2，默认 60s*2=120s。
+# MAX_SOCKETS 只有 10，反复重连时很容易耗尽 socket 池，导致延迟递增/连接失败。
+# 缩短 MSL 到 5s，并放宽 socket 数量。
+
+# ===== v7: 内存优化（原 v4 的值把内部 SRAM 吃光了）=====
+# 内部 SRAM 只有 512KB，静态已占 252KB。
+# WiFi 静态接收缓冲每个约 1.6KB，16 个就吃掉 25KB。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+# 聚合窗口 16 会让每个连接多占缓冲，降回 8（仍比原版 6 好）
+CONFIG_ESP_WIFI_RX_BA_WIN=8
+# TCP 窗口：32KB 太大，一个连接就要 64KB。4 个 MC 玩家 = 256KB，必然爆。
+# 降到 8KB，既够 MC 小包用完，也不至于吃光内存。
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=8192
+CONFIG_LWIP_TCP_WND_DEFAULT=8192
+CONFIG_LWIP_TCP_RCV_BUF=8192
+CONFIG_LWIP_MAX_SOCKETS=10
+# 连接回收（保留 v4.2 的优化，稍微放宽）
+CONFIG_LWIP_TCP_MSL=10000
+CONFIG_LWIP_TCP_FIN_WAIT_TIMEOUT=10000
+# 允许 .bss 段放到外部 PSRAM（解决内部 SRAM 不足）
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+# FreeRTOS 运行时间统计（用于监控 CPU 占用）
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
