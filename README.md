@@ -1,194 +1,211 @@
-# ESP32-S3 我的世界服务器（N16R8 优化版）
+# ESP32-S3 Minecraft Server (N16R8 optimized build)
 
-在 **ESP32-S3 N16R8**（16MB Flash + 8MB PSRAM）上运行一个可玩的 Minecraft Java 版服务器，
-带 **TCP 管理控制台**，可通过局域网远程查看内存/CPU/温度并管理玩家。
+**English** | [简体中文](README.zh-CN.md)
 
-> ⚠️ **重要声明，请务必先读**
+A playable Minecraft **Java Edition** server running on an **ESP32-S3 N16R8**
+(16 MB flash + 8 MB PSRAM), with a **TCP management console** for remote
+memory / CPU / temperature monitoring and player management over LAN.
+
+> ⚠️ **Please read this first**
 >
-> 本项目**大量使用 AI 工具辅助修改**，包括代码分析、性能优化、功能实现与文档撰写。
-> 所有改动尚未经过完整测试，**存在多处已知与未知的 bug**，详见下方「已知问题」。
-> 它是**技术演示与学习项目**，不适合作为正式生存服务器。
+> This project was **heavily modified with the assistance of AI tools**, including
+> code analysis, performance tuning, feature implementation and documentation.
+> All changes are **not fully tested** and there are **many known and unknown bugs**
+> — see [Known Issues](#known-issues).
+> It is a **learning / demonstration project** and is not suitable as a production server.
 
 ---
 
-## 项目来源
+## Origin
 
-本项目是以下两个项目的**二次修改版本**：
+This is a **secondary derivative** of the following projects:
 
-| 层级 | 项目 | 说明 |
+| Layer | Project | Notes |
 |---|---|---|
-| 原始内核 | [p2r3/bareiron](https://github.com/p2r3/bareiron) | 从零实现的 Minecraft 协议服务器，作者 p2r3 |
-| 直接上游 | [jeyyprtf/esp32-mcserver](https://github.com/jeyyprtf/esp32-mcserver) | 把 bareiron 打包到 ESP32-S3 N16R8，提供一键配置与构建说明 |
+| Original core | [p2r3/bareiron](https://github.com/p2r3/bareiron) | From-scratch Minecraft protocol server by p2r3 |
+| Direct upstream | [jeyyprtf/esp32-mcserver](https://github.com/jeyyprtf/esp32-mcserver) | Packages bareiron for ESP32-S3 N16R8 with one-file config |
 
-本项目在 **jeyyprtf/esp32-mcserver** 基础上继续修改，遵循原项目 **GPL-3.0** 许可。
+This project continues from **jeyyprtf/esp32-mcserver** and is released under
+**GPL-3.0**, inherited from upstream.
 
-**这不是原作者的官方版本**，原项目的问题请勿归咎于上游作者。
+**This is NOT an official release by the upstream authors.** Please do not
+blame them for problems in this fork.
 
 ---
 
-## 相对上游新增 / 修改的内容
+## What this fork adds / changes
 
-### 一、可用性修复（让它在 N16R8 上真正跑起来）
+### 1. Build fixes (making it actually run on N16R8)
 
-| 问题 | 修改 |
+| Problem | Fix |
 |---|---|
-| 应用代码不参与编译，链接时找不到 `app_main` | 将 `src/` 更名为 `main/`，ESP-IDF 只识别名为 `main` 的组件 |
-| 编译被大量缩进告警打断 | 对应用组件显式关闭 `-Werror=misleading-indentation` 等 |
-| 组件子模块版本错配，`mbedcrypto` 目标不存在 | 按 superproject 记录的 commit 逐个 pin |
-| 日志级别过高看不到启动过程 | 调整为 `INFO` |
+| Application sources never compiled; linker could not find `app_main` | Renamed `src/` to `main/` — ESP-IDF only links `app_main` from a component named `main` |
+| Build aborted on dozens of indentation warnings | Explicitly disabled `-Werror=misleading-indentation` etc. for the app component |
+| Component submodules at wrong revisions; `mbedcrypto` target missing | Pinned every submodule to the commit recorded by the superproject |
+| Log level too high to see boot output | Set to `INFO` |
 
-### 二、内存优化（最大收益项）
+### 2. Memory optimization (biggest win)
 
-原始版本内部 SRAM 只剩约 100KB，最低到过 **547 字节**，直接导致方块改动失败、物品发放失效。
+The original ran with only ~100 KB of internal SRAM free, dipping to **547 bytes**,
+which silently broke block changes and item drops.
 
-| 改动 | 效果 |
+| Change | Effect |
 |---|---|
-| `block_changes[]`（120KB）迁到 PSRAM（`EXT_RAM_BSS_ATTR`） | 内部 SRAM 占用 73.8% → **35.9%** |
-| WiFi 缓冲从 16/64/64 降到 8/16/16 | 释放约 25KB |
-| TCP 窗口 32768 → 8192 | 每个连接从占 64KB 降到 16KB |
-| `MAX_SOCKETS` 16 → 10 | 减少常驻开销 |
+| Moved `block_changes[]` (120 KB) to PSRAM via `EXT_RAM_BSS_ATTR` | Internal SRAM usage 73.8% → **35.9%** |
+| Reduced WiFi buffers 16/64/64 → 8/16/16 | Freed ~25 KB |
+| TCP window 32768 → 8192 | Per-connection cost 64 KB → 16 KB |
+| `MAX_SOCKETS` 16 → 10 | Lower baseline overhead |
 
-**结果：内部 SRAM 剩余 89KB → 219KB。**
+**Result: free internal SRAM 89 KB → 219 KB.**
 
-### 三、网络延迟优化
+### 3. Network latency optimization
 
-原始版本局域网 ping 高达 **185ms 平均、393ms 峰值**，实测根因在代码而非网络：
+Stock build had **185 ms average / 393 ms peak** LAN ping. Profiling showed the
+cause was the firmware, not the network:
 
-| 问题 | 说明 | 修改 |
+| Problem | Explanation | Fix |
 |---|---|---|
-| 每收一个包就 `vTaskDelay(1)` | 1000Hz 下至少 1ms，登录要往返几十个包 | 改用 `taskYIELD()` |
-| 未设 `TCP_NODELAY` | Nagle 算法攒包等 ACK，最多延迟 40ms | 对监听与每个客户端 socket 设置 |
-| 忙等 `MSG_PEEK` 轮询 | 无数据时空转烧 CPU | 加入 `select()` 等待 |
-| `RX_BA_WIN=6` | 接收聚合窗口过小 | 调整为 8 |
+| `vTaskDelay(1)` on every packet received | ≥1 ms at 1000 Hz; login involves dozens of round-trips | Replaced with `taskYIELD()` |
+| `TCP_NODELAY` never set | Nagle's algorithm held small packets up to 40 ms | Set on listener and every client socket |
+| Busy-wait `MSG_PEEK` polling | Burned CPU while idle | Added `select()` |
+| `RX_BA_WIN=6` | Receive block-ack window too small | Raised to 8 |
 
-**结果：ping 平均 15.97ms、抖动 4.93ms（降约 11 倍）。**
+**Result: 15.97 ms average ping, 4.93 ms jitter (~11× improvement).**
 
-### 四、区块同步重写
+### 4. Chunk synchronization rewritten
 
-原始逻辑用「玩家移动增量」驱动区块发送，存在三个缺陷：
+The original logic drove chunk sending off player movement deltas, with three flaws:
 
-- `if (dx == 0 && dz == 0) break;` —— 站着不动时**一个区块都不发送**
-- `VISITED_HISTORY = 4` —— 走回旧位置判定为「来过」，**不补发**，客户端显示虚空
-- 一次性发送全部区块，阻塞主循环数秒
+- `if (dx == 0 && dz == 0) break;` — **no chunks at all** while standing still
+- `VISITED_HISTORY = 4` — returning to an old position was treated as "already visited"
+  and **never re-sent**, leaving the client looking at void
+- Sending all chunks at once blocked the main loop for seconds
 
-**修改为**：每个玩家维护 `(2r+1)²` 的区块位图，每帧在 30ms 时间预算内补发缺失区块。
+**Replaced with:** a per-player `(2r+1)²` chunk bitmap, topping up missing chunks
+each frame within a 30 ms budget.
 
-### 五、TCP 管理控制台（新增功能）
+### 5. TCP management console (new)
 
-**端口 25566**，无需在设备上接串口即可远程管理。
+**Port 25566.** No serial adapter needed.
 
 ```
-$ nc <板子IP> 25566
+$ nc <board-ip> 25566
 {"uptime_ms":123456,"heap_free":180000,"psram_free":7000000,
  "cpu_core0":12,"cpu_core1":8,"temp_c":52.3,"players":1}
 ```
 
-发送文本命令（以换行结束）：
+Send a line of text to run a command:
 
-| 命令 | 作用 |
+| Command | Description |
 |---|---|
-| `list` | 列出在线玩家（编号、名字、坐标、血量） |
-| `kick <名字\|编号>` | 踢出玩家，客户端显示 "Kicked by console" |
-| `say <文本>` | 全服广播 |
-| `gm <0\|1\|2\|3>` | 切换游戏模式（0生存/1创造/2冒险/3观察） |
-| `status` | 多行状态报告 |
-| `help` | 命令列表 |
+| `list` | List online players (slot, name, coords, health) |
+| `kick <name\|slot>` | Disconnect a player (client shows "Kicked by console") |
+| `say <text>` | Broadcast a chat message |
+| `gm <0\|1\|2\|3>` | Change game mode (0 survival, 1 creative, 2 adventure, 3 spectator) |
+| `status` | Multi-line status report |
+| `help` | Command list |
 
-#### 配套本地客户端
+#### Bundled client
 
-仓库内提供 `mc_console.py`：
+`mc_console.py` is included:
 
 ```bash
-python3 mc_console.py status --host 192.168.1.100   # 单次状态
-python3 mc_console.py watch  --host 192.168.1.100   # 每 2 秒刷新
-python3 mc_console.py list                          # 在线玩家
-python3 mc_console.py kick Steve                    # 踢人
-python3 mc_console.py say 服务器5分钟后重启          # 广播
+python3 mc_console.py status --host 192.168.1.100   # one-shot status
+python3 mc_console.py watch  --host 192.168.1.100   # refresh every 2s
+python3 mc_console.py list                          # online players
+python3 mc_console.py kick Steve                    # kick
+python3 mc_console.py say Server restarting in 5m   # broadcast
 ```
 
-**设计说明**：控制台命令不会直接操作玩家 socket（那样会与主循环并发冲突，
-曾导致玩家被误踢下线）。所有会写 socket 的命令都只设置标记，
-由主循环统一执行，保证串行访问。
+**Design note:** console commands never write to player sockets directly —
+that races with the main loop and previously kicked players offline.
+Commands that touch sockets only set a flag; the main loop performs the write,
+guaranteeing serialized access.
 
 ---
 
-## 已知问题（未修复，请勿期待）
+## Known Issues
 
-> 以下问题在本版本中**依然存在**，欢迎有能力者继续完善。
+> These problems **still exist** in this build. Contributions welcome.
 
-1. **方块可能显示为透明**
-   区块包（Chunk Data and Update Light）的长度计算曾少报 1 字节，
-   导致客户端解码错位、抛 `DecoderException`。已按实际写出顺序重算修正，
-   但**尚未经过长时间验证**，可能仍存在其他包长度偏差。
+1. **Blocks may render as transparent**
+   The chunk packet (Chunk Data and Update Light) length was under-reported by
+   1 byte, causing client decode desync and `DecoderException: packet id 39`.
+   The length math has been recomputed and fixed, but **has not been verified
+   over long sessions** — other packet lengths may still be wrong.
 
-2. **没有下界与末地维度**
-   代码中只有 `B_netherrack` 之类的方块 ID 常量，**没有任何维度切换逻辑**。
-   因此**永远无法通关**：拿不到烈焰棒、也去不了末地打龙。
+2. **No Nether or End dimensions**
+   Only block ID constants exist (`B_netherrack` etc.); there is **no dimension
+   switching logic**. The game is therefore **impossible to finish** — no blaze
+   rods, no End, no dragon.
 
-3. **生物只有 5 种**
-   仅鸡、牛、猪、羊、僵尸。没有苦力怕、末影人、骷髅等。
+3. **Only 5 mob types**
+   Chicken, cow, pig, sheep, zombie. No creeper, enderman, skeleton, etc.
 
-4. **没有附魔 / 酿造 / 红石逻辑**
-   相关方块只有 ID 定义，右键无任何效果。
+4. **No enchanting / brewing / redstone**
+   Those blocks exist as IDs only, with no behavior.
 
-5. **TNT 无法点燃**
-   TNT 只是个装饰方块，没有爆炸、连锁破坏、伤害计算。
+5. **TNT cannot be ignited**
+   TNT is a decorative block. No explosion, chain reaction or damage.
 
-6. **没有要塞、村庄等地形结构**
+6. **No structures** (fortresses, villages, etc.)
 
-7. **不支持正版验证**
-   任何用户名都可进入。**切勿暴露到公网**，只适合可信的局域网。
+7. **No authentication**
+   Any username may join. **Never expose this to the internet** — LAN only.
 
-8. **存档兼容性脆弱**
-   修改 `MAX_BLOCK_CHANGES` 会导致旧 `world.bin` 无法读取，需擦除 Flash。
+8. **Fragile save compatibility**
+   Changing `MAX_BLOCK_CHANGES` makes existing `world.bin` unreadable;
+   the flash partition must be erased.
 
-9. **CPU 占用偏高**
-   主循环的 `select()` 超时加上性能统计后，实测核1 仍可能长期接近 100%。
-
----
-
-## 硬件要求
-
-- **ESP32-S3 N16R8**（16MB Flash + 8MB Octal PSRAM）—— 其他型号可能因内存不足无法运行
-- USB 数据线
-- **2.4GHz** WiFi（ESP32 不支持 5GHz）
-
-## 客户端要求
-
-- Minecraft **Java 版 1.21.8**（协议 772），其他版本无法连接
-- 不支持基岩版（手机/主机版）
+9. **High CPU usage**
+   Even after raising the `select()` timeout and enabling run-time stats,
+   CPU core 1 may sit near 100%.
 
 ---
 
-## 构建
+## Requirements
 
-需要 **ESP-IDF v5.4**。
+**Hardware**
+- **ESP32-S3 N16R8** (16 MB flash + 8 MB *Octal* PSRAM). Other variants may
+  fail to boot due to insufficient memory.
+- USB **data** cable
+- **2.4 GHz** WiFi (ESP32 cannot use 5 GHz)
+
+**Client**
+- Minecraft **Java Edition 1.21.8** (protocol 772). Other versions will not connect.
+- Bedrock Edition (mobile / console) is **not** supported.
+
+---
+
+## Building
+
+Requires **ESP-IDF v5.4** (developed against v5.4.4).
 
 ```bash
-# 1. 生成注册表（需要 Java 21+ 和 Node.js，只需一次）
+# 1. Generate registries (needs Java 21+ and Node.js, once only)
 mkdir -p notchian
-# 把 1.21.8 的 server.jar 放进 notchian/
+# place the 1.21.8 server.jar into notchian/
 ./extract_registries.sh
 
-# 2. 配置 WiFi
+# 2. Configure WiFi
 cp include/config.h.example include/config.h
-# 编辑 include/config.h 填入 SSID 和密码
+# edit include/config.h and set SSID / password
 
-# 3. 编译
+# 3. Build
 idf.py set-target esp32s3
 idf.py build
 ```
 
-> 注：本项目实测用的是 ESP-IDF v5.4.4。构建过程中需要将子模块 pin 到
-> superproject 记录的 commit，否则会出现 `mbedcrypto not built` 错误。
+> Submodules must be pinned to the revisions recorded by the superproject,
+> otherwise the build fails with `mbedcrypto not built`.
 
-## 烧录
+## Flashing
 
 ```bash
 esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 build/esp32-mcserver.bin
 ```
 
-若使用合并固件（bootloader + 分区表 + 应用）：
+Or build a single merged image (bootloader + partition table + app):
 
 ```bash
 esptool.py --chip esp32s3 merge_bin -o full.bin \
@@ -200,69 +217,70 @@ esptool.py --chip esp32s3 merge_bin -o full.bin \
 esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 full.bin
 ```
 
-> **Flash 模式必须是 DIO**。部分 N16R8 板子走线为两线，用 QIO 会导致
-> bootloader 读取 Flash 失败、RTC 看门狗无限复位。
+> **Flash mode must be DIO.** Some N16R8 boards are wired for two-line SPI;
+> using QIO makes the bootloader fail to read flash and loop on the RTC watchdog.
 
-## 使用
+## Usage
 
-1. 烧录后重新上电，串口（115200）会打印：
+1. After flashing, power cycle and watch the serial console (115200 baud):
    ```
    I (xxxx) esp_netif_handlers: sta ip: 192.168.1.xxx
    Server listening on port 25565...
    ```
-   记下这个 IP。
+   Note the IP address.
 
-2. 客户端用同一 2.4GHz WiFi，添加服务器，地址填该 IP。
+2. On the client, join the same 2.4 GHz network, add a server, enter that IP.
 
-3. 首次进入会等待数秒（世界按区块生成）。
+3. The first join takes several seconds while chunks are generated.
 
-### 游戏内命令
+### In-game commands
 
-| 命令 | 作用 |
+| Command | Description |
 |---|---|
-| `!gm 0~3` | 切换游戏模式 |
-| `!tp <x> <y> <z>` | 传送 |
-| `!give <物品>` | 给予物品 |
-| `!time` | 设置时间 |
-| `!help` | 查看全部 |
+| `!gm 0~3` | Change game mode |
+| `!tp <x> <y> <z>` | Teleport |
+| `!give <item>` | Give item |
+| `!time` | Set time |
+| `!help` | List all commands |
 
 ---
 
-## 目录结构
+## Layout
 
 ```
-├── main/              应用代码（ESP-IDF 要求组件名为 main）
-│   ├── main.c         主循环、网络、区块同步
-│   ├── monitor.c      TCP 管理控制台（本项目新增）
-│   ├── packets.c      协议收发包
-│   ├── procedures.c   游戏逻辑
-│   ├── worldgen.c     地形生成
-│   └── serialize.c    存档读写
+├── main/              Application code (ESP-IDF requires the name "main")
+│   ├── main.c         Main loop, networking, chunk sync
+│   ├── monitor.c      TCP management console (added by this fork)
+│   ├── packets.c      Protocol encode/decode
+│   ├── procedures.c   Game logic
+│   ├── worldgen.c     Terrain generation
+│   └── serialize.c    Save/load
 ├── include/
-│   ├── config.h.example  配置模板
-│   └── globals.h         全局定义
-├── mc_console.py      本地控制台客户端
-├── partitions.csv     分区表
-└── sdkconfig.defaults 默认构建配置
+│   ├── config.h.example  Configuration template
+│   └── globals.h         Global definitions
+├── mc_console.py      Local console client
+├── partitions.csv     Partition table
+└── sdkconfig.defaults Default build configuration
 ```
 
 ---
 
-## 许可证
+## License
 
-**GPL-3.0**，继承自上游项目。
+**GPL-3.0**, inherited from upstream.
 
-原项目版权归 p2r3（bareiron）与 jeyyprtf（esp32-mcserver）所有。
-本项目的修改部分同样以 GPL-3.0 发布。
-
----
-
-## 致谢
-
-- [p2r3/bareiron](https://github.com/p2r3/bareiron) —— 从零实现的 Minecraft 协议内核
-- [jeyyprtf/esp32-mcserver](https://github.com/jeyyprtf/esp32-mcserver) —— 打包与构建说明
-- Espressif —— ESP-IDF 与硬件支持
+Copyright of the original work belongs to p2r3 (bareiron) and jeyyprtf
+(esp32-mcserver). Modifications in this fork are released under the same license.
 
 ---
 
-**再次提醒：本项目由 AI 协助修改，存在大量未修复问题，仅适合学习与实验。**
+## Credits
+
+- [p2r3/bareiron](https://github.com/p2r3/bareiron) — from-scratch Minecraft protocol core
+- [jeyyprtf/esp32-mcserver](https://github.com/jeyyprtf/esp32-mcserver) — packaging and build guide
+- Espressif — ESP-IDF and hardware support
+
+---
+
+**Reminder: this project was modified with AI assistance and contains many
+unfixed issues. Use it for learning and experimentation only.**
