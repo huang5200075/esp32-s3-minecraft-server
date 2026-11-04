@@ -1,6 +1,8 @@
 # ESP32-S3 我的世界服务器（N16R8 优化版）
 
-[English](README.md) | **简体中文**
+<p align="right">
+<a href="https://github.com/huang5200075/esp32-s3-minecraft-server/blob/main/README.md">English</a> &nbsp;|&nbsp; <b>简体中文</b>
+</p>
 
 在 **ESP32-S3 N16R8**（16MB Flash + 8MB PSRAM）上运行一个可玩的 Minecraft Java 版服务器，
 带 **TCP 管理控制台**，可通过局域网远程查看内存 / CPU / 温度并管理玩家。

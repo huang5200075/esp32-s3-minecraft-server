@@ -1,6 +1,8 @@
 # ESP32-S3 Minecraft Server (N16R8 optimized build)
 
-**English** | [简体中文](README.zh-CN.md)
+<p align="right">
+<b>English</b> &nbsp;|&nbsp; <a href="https://github.com/huang5200075/esp32-s3-minecraft-server/blob/main/README.zh-CN.md">简体中文</a>
+</p>
 
 A playable Minecraft **Java Edition** server running on an **ESP32-S3 N16R8**
 (16 MB flash + 8 MB PSRAM), with a **TCP management console** for remote
