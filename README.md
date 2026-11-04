@@ -5,7 +5,13 @@ A playable Minecraft **Java Edition** server running on an **ESP32-S3 N16R8**
 (16 MB flash + 8 MB PSRAM), with a **TCP management console** for remote
 memory / CPU / temperature monitoring and player management over LAN.
 
-![In-game screenshot](docs/screenshots/terrain.jpg)
+<p align="center">
+  <img src="docs/screenshots/terrain.jpg" width="32%" alt="Terrain">
+  <img src="docs/screenshots/first-spawn.jpg" width="32%" alt="First join">
+  <img src="docs/screenshots/chunk-loading.jpg" width="32%" alt="Chunk streaming">
+</p>
+
+<p align="center"><sub>Running on a real ESP32-S3 N16R8 over 2.4 GHz WiFi · FPS 132–154 on the client side</sub></p>
 
 > ⚠️ **Please read this first**
 >
@@ -14,17 +20,6 @@ memory / CPU / temperature monitoring and player management over LAN.
 > All changes are **not fully tested** and there are **many known and unknown bugs**
 > — see [Known Issues](#known-issues).
 > It is a **learning / demonstration project** and is not suitable as a production server.
-
----
-
-## Screenshots
-
-| First join (chunks streaming in) | Terrain detail |
-|---|---|
-| ![First spawn](docs/screenshots/first-spawn.jpg) | ![Terrain](docs/screenshots/chunk-loading.jpg) |
-
-> Captured in-game on a real ESP32-S3 N16R8 over 2.4 GHz WiFi.
-> The partially loaded view is expected on first join while chunks are generated.
 
 ---
 
