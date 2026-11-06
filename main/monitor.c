@@ -39,6 +39,7 @@
 #include "packets.h"
 #include "procedures.h"
 #include "monitor.h"
+#include "console_cmds.h"
 
 static const char *TAG = "con";
 
@@ -242,14 +243,32 @@ static void cmd_status (int fd) {
 
 static void cmd_help (int fd) {
   reply(fd,
-    "commands:\n"
-    "  list             list online players\n"
-    "  kick <name|idx>  disconnect a player\n"
-    "  say <text>       broadcast chat message\n"
-    "  gm <0|1|2|3>     gamemode (0=survival 1=creative 2=adventure 3=spectator)\n"
-    "  status           memory / cpu / temperature\n"
-    "  help             this text\n"
-    "(connect without sending anything to get JSON status)\n");
+    "== players ==\n"
+    "  list                 online player list\n"
+    "  players              detailed player info (mode/hp/food/pos)\n"
+    "  kick <name|idx>      disconnect a player\n"
+    "  say <text>           broadcast chat message\n"
+    "  gm <0|1|2|3>         gamemode (0 survival / 1 creative / 2 adventure / 3 spectator)\n"
+    "\n== players (action) ==\n"
+    "  give <player> <itemID> [n]   give items (1-64)\n"
+    "  tp <player> <x> <y> <z>      teleport one player\n"
+    "  tpall <x> <y> <z>            teleport everyone\n"
+    "  heal <player>                restore health and hunger\n"
+    "  kill <player>                kill a player\n"
+    "  clear <player>               empty inventory\n"
+    "\n== world ==\n"
+    "  time <day|noon|night|midnight|0-23999>   set world time\n"
+    "  setblock <x> <y> <z> <blockID>           place one block\n"
+    "  fill <x1 y1 z1> <x2 y2 z2> <blockID>     fill a region (max 4096)\n"
+    "  spawn <mobID> [n]                        spawn mobs (25 chicken/28 cow/\n"
+    "                                           95 pig/106 sheep/145 zombie)\n"
+    "  save                                     flush world + players to flash\n"
+    "\n== server ==\n"
+    "  status               memory / cpu / temperature\n"
+    "  help                 this text\n"
+    "\n(connect without sending anything to get one-line JSON status)\n"
+    "\nNot available on this server: xp, enchant, effect, execute,\n"
+    "gamerule, dimension switching (no Nether/End).\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -263,14 +282,28 @@ static void run_command (int fd, char *cmd) {
   char *arg = strchr(cmd, ' ');
   if (arg) { *arg = 0; arg ++; while (*arg == ' ') arg ++; }
 
-  if      (!strcasecmp(cmd, "list"))   cmd_list(fd);
-  else if (!strcasecmp(cmd, "kick"))   cmd_kick(fd, arg);
-  else if (!strcasecmp(cmd, "say"))    cmd_say(fd, arg);
-  else if (!strcasecmp(cmd, "gm"))     cmd_gm(fd, arg);
-  else if (!strcasecmp(cmd, "status")) cmd_status(fd);
-  else if (!strcasecmp(cmd, "help"))   cmd_help(fd);
-  else if (!strcasecmp(cmd, "info"))   cmd_status(fd);
-  else if (!strcasecmp(cmd, ""))       { char j[384]; build_json(j, sizeof(j)); reply(fd, j); }
+  cc_reply_t rep = (cc_reply_t)reply;
+
+  if      (!strcasecmp(cmd, "list"))    cmd_list(fd);
+  else if (!strcasecmp(cmd, "players")) cc_players(fd, rep, arg);
+  else if (!strcasecmp(cmd, "kick"))    cmd_kick(fd, arg);
+  else if (!strcasecmp(cmd, "say"))     cmd_say(fd, arg);
+  else if (!strcasecmp(cmd, "gm"))      cmd_gm(fd, arg);
+  else if (!strcasecmp(cmd, "give"))    cc_give(fd, rep, arg);
+  else if (!strcasecmp(cmd, "tp"))      cc_tp(fd, rep, arg);
+  else if (!strcasecmp(cmd, "tpall"))   cc_tpall(fd, rep, arg);
+  else if (!strcasecmp(cmd, "heal"))    cc_heal(fd, rep, arg);
+  else if (!strcasecmp(cmd, "kill"))    cc_kill(fd, rep, arg);
+  else if (!strcasecmp(cmd, "clear"))   cc_clear(fd, rep, arg);
+  else if (!strcasecmp(cmd, "time"))    cc_time(fd, rep, arg);
+  else if (!strcasecmp(cmd, "setblock"))cc_setblock(fd, rep, arg);
+  else if (!strcasecmp(cmd, "fill"))    cc_fill(fd, rep, arg);
+  else if (!strcasecmp(cmd, "spawn"))   cc_spawn(fd, rep, arg);
+  else if (!strcasecmp(cmd, "save"))    cc_save(fd, rep, arg);
+  else if (!strcasecmp(cmd, "status"))  cmd_status(fd);
+  else if (!strcasecmp(cmd, "info"))    cmd_status(fd);
+  else if (!strcasecmp(cmd, "help"))    cmd_help(fd);
+  else if (!strcasecmp(cmd, ""))        { char j[384]; build_json(j, sizeof(j)); reply(fd, j); }
   else {
     reply(fd, "unknown command, try 'help'\n");
   }

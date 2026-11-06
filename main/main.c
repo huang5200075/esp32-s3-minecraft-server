@@ -645,9 +645,26 @@ int main () {
     // Look for valid connected clients
     client_index ++;
     if (client_index == MAX_PLAYERS) client_index = 0;
-    if (clients[client_index] == -1) continue;
 
-    // [v8] 执行控制台排队的命令（必须在主循环里做，保证串行访问 socket）
+    // [v19] 关键修复：原来下一行是
+    //     if (clients[client_index] == -1) continue;
+    // 它会跳过后面的「控制台命令 / 区块同步 / 服务器 tick / 包处理」。
+    // 玩家只占 16 个槽位中的 1 个时，87% 的循环轮次什么都没做：
+    //   - Keep-Alive 每秒只发约 1/16 次 -> 客户端断电 30 秒才发现断线
+    //   - 摔落/岩浆等 tick 伤害几乎不生效
+    //   - 方块改动与物品发放被严重拖慢
+    // 现在把 tick 和控制台命令移到 continue 之前，保证每轮都执行。
+
+    // Handle periodic events (server ticks)
+    {
+      int64_t time_since_last_tick = get_program_time() - last_tick_time;
+      if (time_since_last_tick > TIME_BETWEEN_TICKS) {
+        handleServerTick(time_since_last_tick);
+        last_tick_time = get_program_time();
+      }
+    }
+
+    // 执行控制台排队的命令（必须在主循环里做，保证串行访问 socket）
     if (console_pending) {
       uint8_t pend = console_pending;
       console_pending = 0;
@@ -719,12 +736,9 @@ int main () {
     next_player: ;
     }
 
-    // Handle periodic events (server ticks)
-    int64_t time_since_last_tick = get_program_time() - last_tick_time;
-    if (time_since_last_tick > TIME_BETWEEN_TICKS) {
-      handleServerTick(time_since_last_tick);
-      last_tick_time = get_program_time();
-    }
+    // [v19] 到这里才判断当前槽位是否有客户端要处理数据。
+    // 上面的 tick / 控制台命令 / 区块同步每轮都会执行，不受这里影响。
+    if (clients[client_index] == -1) continue;
 
     // Handle this individual client
     int client_fd = clients[client_index];

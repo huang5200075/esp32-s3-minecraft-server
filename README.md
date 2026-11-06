@@ -91,7 +91,30 @@ The original logic drove chunk sending off player movement deltas, with three fl
 **Replaced with:** a per-player `(2r+1)²` chunk bitmap, topping up missing chunks
 each frame within a 30 ms budget.
 
-### 5. TCP management console (new)
+### 5. Main-loop starvation fix (critical)
+
+The original main loop did this:
+
+```c
+client_index++;
+if (clients[client_index] == -1) continue;   // <-- jumps over everything below
+// ... console commands, chunk sync, server tick, packet handling
+```
+
+With a single player occupying one of 16 slots, **~94% of loop iterations did
+nothing at all**. That single line caused a surprising number of symptoms:
+
+| Symptom | Cause |
+|---|---|
+| Client took ~30 s to notice the board was powered off | keep-alive was sent only ~1/16th as often as intended |
+| Fall damage never applied | damage is evaluated inside `handleServerTick()` |
+| Breaking blocks gave no items | item grant was starved by the same slowdown |
+| In-game commands appeared to do nothing | chat handling timed out client-side |
+
+**Fixed** by moving the server tick, queued console commands and chunk sync
+*before* the `continue`, so they run every iteration.
+
+### 6. TCP management console (new)
 
 **Port 25566.** No serial adapter needed.
 
@@ -104,13 +127,29 @@ $ nc <board-ip> 25566
 Send a line of text to run a command:
 
 | Command | Description |
-|---|---|
-| `list` | List online players (slot, name, coords, health) |
-| `kick <name\|slot>` | Disconnect a player (client shows "Kicked by console") |
+|---|---|---|
+| `list` | Online players (slot, name, coords, health) |
+| `players` | Detailed info (gamemode, health, food, position) |
+| `kick <name\|slot>` | Disconnect a player |
 | `say <text>` | Broadcast a chat message |
-| `gm <0\|1\|2\|3>` | Change game mode (0 survival, 1 creative, 2 adventure, 3 spectator) |
+| `gm <0\|1\|2\|3>` | Game mode (0 survival / 1 creative / 2 adventure / 3 spectator) |
+| `give <player> <itemID> [n]` | Give items (1-64) |
+| `tp <player> <x> <y> <z>` | Teleport one player |
+| `tpall <x> <y> <z>` | Teleport everyone |
+| `heal <player>` | Restore health and hunger |
+| `kill <player>` | Kill a player |
+| `clear <player>` | Empty a player's inventory |
+| `time <day\|noon\|night\|midnight\|0-23999>` | Set world time |
+| `setblock <x> <y> <z> <blockID>` | Place a single block |
+| `fill <x1 y1 z1> <x2 y2 z2> <blockID>` | Fill a region (max 4096 blocks) |
+| `spawn <mobID> [n]` | Spawn mobs (25 chicken / 28 cow / 95 pig / 106 sheep / 145 zombie) |
+| `save` | Flush world and player data to flash |
 | `status` | Multi-line status report |
 | `help` | Command list |
+
+> **Not available** (these systems do not exist in this server):
+> `xp`, `enchant`, `effect`, `execute`, `gamerule`, `datapack`,
+> dimension switching (no Nether/End).
 
 #### Bundled client
 
@@ -131,7 +170,7 @@ guaranteeing serialized access.
 
 ---
 
-### 6. Web-based WiFi provisioning (new)
+### 7. Web-based WiFi provisioning (new)
 
 No more hardcoding SSID/password. On first boot, or whenever the saved
 network cannot be reached, the board opens a setup hotspot:
