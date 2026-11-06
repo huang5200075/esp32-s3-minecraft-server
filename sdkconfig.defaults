@@ -39,9 +39,12 @@ CONFIG_BOOTLOADER_LOG_LEVEL=3
 # 接收块聚合窗口 6 -> 16，减少停等 ACK
 # 加大缓冲，避免高吞吐时丢包重传
 # TCP 窗口 5760 -> 32KB
-# 关闭 WPA3 SAE（你的 AP 是 WPA2/WPA3 混合，SAE 会周期性重协商造成延迟尖峰）
-# CONFIG_ESP_WIFI_ENABLE_WPA3_SAE is not set
-# CONFIG_ESP_WIFI_ENABLE_SAE_PK is not set
+# [v12] WPA3 SAE 必须保留。之前为降低延迟关闭它，但配网组件开启 softAP 时
+# 需要 WPA3 相关支持，关闭后会触发
+#   "Invalid authmode ENABLE WPA3 in config for WPA3_PSK authmode" -> abort()
+# 导致配网模式一启动就崩溃。延迟优化的收益远小于稳定性，这里恢复默认（开启）。
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+CONFIG_ESP_WIFI_ENABLE_SAE_PK=y
 
 # ===== v4.2: 连接回收优化 =====
 # 每次连接关闭后 socket 在 TIME_WAIT 停留 TCP_MSL*2，默认 60s*2=120s。
@@ -61,7 +64,9 @@ CONFIG_ESP_WIFI_RX_BA_WIN=8
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=8192
 CONFIG_LWIP_TCP_WND_DEFAULT=8192
 CONFIG_LWIP_TCP_RCV_BUF=8192
-CONFIG_LWIP_MAX_SOCKETS=10
+# [v13] 10 个 socket 不够用：MC服务器1 + 控制台1 + HTTP配网3 + DNS1 + 玩家若干，
+# 配网页会打不开。内存优化后 SRAM 有 219KB，socket 结构本身很小，放宽到 16。
+CONFIG_LWIP_MAX_SOCKETS=16
 # 连接回收（保留 v4.2 的优化，稍微放宽）
 CONFIG_LWIP_TCP_MSL=10000
 CONFIG_LWIP_TCP_FIN_WAIT_TIMEOUT=10000
@@ -70,3 +75,30 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 # FreeRTOS 运行时间统计（用于监控 CPU 占用）
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
+# ===== v15: 修复配网 HTTP 服务起不来 =====
+# esp_wifi_portal 在 WiFi 事件回调（esp_event 任务）里调 esp_wifi_portal_start()，
+# 该函数会依次执行 esp_netif_create_default_wifi_ap / httpd_start / start_dns_server，
+# 默认事件任务栈只有 2304 字节，栈溢出后 HTTP 服务静默失败（热点能开、网页打不开）。
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
+
+# ===== v17: 修复配网页打不开 =====
+# ENHANCED_CAPTIVE 会把客户端 IP 设成 8.8.8.8（诱导安卓弹认证框），
+# 副作用是手机认为已有 IP 且"能上网"，手动访问 192.168.4.1 会走 8.8.8.8 网段，
+# 根本到不了板子 —— 表现就是"连上了但打不开后台"。
+# 关掉它，使用标准的 192.168.4.1 网关 + DHCP 地址池。
+# CONFIG_ESP_WIFI_PORTAL_AP_ENHANCED_CAPTIVE is not set
+CONFIG_ESP_WIFI_PORTAL_ENABLE_DHCP_CAPTIVE_PORTAL=n
+CONFIG_ESP_WIFI_PORTAL_AP_IP="192.168.4.1"
+CONFIG_ESP_WIFI_PORTAL_AP_NETMASK="255.255.255.0"
+CONFIG_ESP_WIFI_PORTAL_AP_GATEWAY="192.168.4.1"
+
+# ===== v18: 修复配网页报 "Header fields are too long" =====
+# ESP-IDF 默认 MAX_REQ_HDR_LEN=512 字节，现代浏览器（Chrome/微信内置）
+# 的请求头（User-Agent + Accept* + Cookie 等）轻松超过 1KB，
+# httpd 会直接返回 431 "Header fields are too long"，页面显示这段纯文本。
+# 同时放宽 URI 长度和 socket 队列。
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024
+CONFIG_HTTPD_PURGE_BUF_LEN=64
+CONFIG_HTTPD_QUEUE_WORK_BLOCKING=y

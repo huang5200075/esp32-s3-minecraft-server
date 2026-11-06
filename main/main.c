@@ -13,8 +13,11 @@
   #include "freertos/task.h"
   #include "nvs_flash.h"
   #include "esp_wifi.h"
+  #include "esp_netif.h"
   #include "esp_event.h"
   #include "esp_timer.h"
+  #include "esp_log.h"
+  #include "esp_wifi_portal.h"
   #include "lwip/sockets.h"
   #include "lwip/netdb.h"
 #else
@@ -834,47 +837,57 @@ void bareiron_main (void *pvParameters) {
 }
 
 static void wifi_event_handler (void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-    esp_wifi_connect();
-  } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-    esp_wifi_connect();
-  } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-    printf("Got IP, starting server...\n\n");
+  // [v10] STA 连接/断开的重连逻辑交给 esp_wifi_portal 组件处理。
+  // [v15] 关键：只有真正拿到 IP（= 连上 WiFi）之后，才启动 MC 服务器和控制台。
+  // 配网阶段（只有 softAP、没有 STA 连接）完全不启动这些服务，
+  // 把 socket / CPU / 内存全部留给配网页，避免抢占导致页面打不开。
+  if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    static int started = 0;
+    if (started) return;
+    started = 1;
+
+    const ip_event_got_ip_t *ev = (const ip_event_got_ip_t *)event_data;
+    printf("Got IP: " IPSTR ", starting server...\n\n", IP2STR(&ev->ip_info.ip));
+
     xTaskCreate(bareiron_main, "bareiron", 4096, NULL, 5, NULL);
+    monitor_start();
   }
 }
 
 void wifi_init () {
-  nvs_flash_init();
-  esp_netif_init();
-  esp_event_loop_create_default();
-  esp_netif_create_default_wifi_sta();
+  // [v11] NVS 必须正确处理初始化失败：
+  //  - 分区满 / 版本不匹配  -> 擦除后重新初始化（旧 WiFi 配置会丢失，从头配网）
+  //  - 已经初始化过        -> 忽略 ESP_ERR_INVALID_STATE
+  // 原来直接调用不检查返回值，一旦出错 esp_wifi_init() 拿不到 NVS 就会崩溃。
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_LOGW("wifi", "NVS needs erase (%s), erasing...", esp_err_to_name(err));
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    err = nvs_flash_init();
+  }
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE("wifi", "nvs_flash_init failed: %s", esp_err_to_name(err));
+  }
 
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  esp_wifi_init(&cfg);
+  ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-  esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL);
-  esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL);
+  // [v10] 接入 esp_wifi_portal 组件（第三方开源，Apache-2.0）：
+  //   - NVS 里已有 WiFi 配置 -> 直连，连上后启动 MC 服务器
+  //   - 没有配置 / 连不上   -> 自动开启热点，手机连上后弹配网页面
+  //   - 配网失败或断线      -> 自动重开热点
+  // 不再需要在 config.h 里硬编码 SSID / 密码。
+  ESP_ERROR_CHECK(esp_wifi_portal_init());
 
-  wifi_config_t wifi_config = {
-    .sta = {
-      .ssid = WIFI_SSID,
-      .password = WIFI_PASS,
-      .threshold.authmode = WIFI_AUTH_WPA2_PSK
-    }
-  };
-
-  esp_wifi_set_mode(WIFI_MODE_STA);
-  esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  esp_wifi_start();
+  esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                      &wifi_event_handler, NULL, NULL);
 }
 
 void app_main () {
   esp_timer_early_init();
   wifi_init();
-  // [v6] 启动状态监控服务（端口 25566，连上即回一行 JSON）
-  monitor_start();
+  // [v15] 控制台/监控服务改为"连上 WiFi 后才启动"（见 wifi_event_handler）。
+  // 配网阶段不占用 socket、CPU 和内存，把资源都留给配网页。
 }
 
 // [v6] 供 monitor.c 查询的运行时信息

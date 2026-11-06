@@ -1,0 +1,61 @@
+menu "ESP WiFi Portal configuration"
+
+    config ESP_WIFI_PORTAL_STA_RETRY_CNT
+        int "STA retry connect count"
+        default 3
+        help
+            Retry count when STA connect to AP fail.
+
+    config ESP_WIFI_PORTAL_AP_SSID
+        string "AP SSID"
+        default "esp32_ap_ssid"
+        help
+            SSID (network name) to set up the AP with.
+
+    config ESP_WIFI_PORTAL_AP_PASSWORD
+        string "AP Password"
+        default "esp32_ap_pwd"
+        help
+            Password (WPA or WPA2) for the example to use for the AP.
+
+    config ESP_WIFI_PORTAL_AP_IP
+        string "AP IP"
+        default "192.168.4.1"
+        depends on !ESP_WIFI_PORTAL_AP_ENHANCED_CAPTIVE
+        help
+            IP address to set up the AP with.
+
+    config ESP_WIFI_PORTAL_AP_NETMASK
+        string "AP Netmask"
+        default "255.255.255.0"
+        depends on !ESP_WIFI_PORTAL_AP_ENHANCED_CAPTIVE
+        help
+            Netmask to set up the AP with.
+
+    config ESP_WIFI_PORTAL_AP_GATEWAY
+        string "AP Gateway"
+        default "192.168.4.1"
+        depends on !ESP_WIFI_PORTAL_AP_ENHANCED_CAPTIVE
+        help
+            Gateway to set up the AP with.
+
+    config ESP_WIFI_PORTAL_AP_ENHANCED_CAPTIVE
+        bool "AP Enhanced Captive Portal"
+        default y
+        depends on ESP_WIFI_PORTAL_ENABLE_DHCP_CAPTIVE_PORTAL
+        help
+            Enable enhanced captive portal for the AP. Set ip to 8.8.8.8 to solve android captive portal issue.
+
+    config ESP_WIFI_PORTAL_ENABLE_DHCP_CAPTIVE_PORTAL
+        bool "DHCP Captive portal"
+        default y
+        help
+            Enables more modern DHCP-based Option 114 to provide clients with the captive portal URI.
+
+    config ESP_WIFI_PORTAL_MAX_SCAN_CONN
+        int "Maximal scan connections"
+        default 8
+        help
+            Max number of the scan connections.
+
+endmenu

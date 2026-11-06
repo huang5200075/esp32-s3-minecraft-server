@@ -131,15 +131,46 @@ guaranteeing serialized access.
 
 ---
 
+### 6. Web-based WiFi provisioning (new)
+
+No more hardcoding SSID/password. On first boot, or whenever the saved
+network cannot be reached, the board opens a setup hotspot:
+
+| | |
+|---|---|
+| **Hotspot SSID** | `esp32_ap_ssid` |
+| **Hotspot password** | `esp32_ap_pwd` |
+| **Setup page** | **http://192.168.4.1** |
+
+Connect to the hotspot, open the page, pick your WiFi from the scanned list,
+enter the password and submit. Credentials are stored in NVS and reused
+on the next boot.
+
+**Behaviour**
+
+- Credentials saved and reachable -> connects directly, starts the server
+- No credentials / connection fails -> opens the setup hotspot
+- Provisioning succeeds -> hotspot, HTTP and DNS shut down automatically,
+  the MC server and management console start only after an IP is obtained
+- Portal startup fails 3 times -> stops retrying instead of looping
+
+> The MC server and TCP console are **not** started while in provisioning
+> mode, so the whole socket pool and CPU are available to the setup page.
+
+Based on the open-source [lz00qs/esp_wifi_portal](https://github.com/lz00qs/esp_wifi_portal)
+component (Apache-2.0), with several fixes applied — see `Known Issues` below.
+
 ## Known Issues
 
 > These problems **still exist** in this build. Contributions welcome.
 
 1. **Blocks may render as transparent**
-   The chunk packet (Chunk Data and Update Light) length was under-reported by
-   1 byte, causing client decode desync and `DecoderException: packet id 39`.
-   The length math has been recomputed and fixed, but **has not been verified
-   over long sessions** — other packet lengths may still be wrong.
+   Likely caused by the protocol stream desyncing under concurrent socket
+   access (the server used to write to player sockets from multiple tasks).
+   That has since been serialized through the main loop, which reduced the
+   frequency a lot, but **the root cause is not fully proven**. A diagnostic
+   unit test (`tests/test_mc_logic.c`) confirms the chunk packet length math
+   is self-consistent — so the remaining fault is elsewhere.
 
 2. **No Nether or End dimensions**
    Only block ID constants exist (`B_netherrack` etc.); there is **no dimension
@@ -194,14 +225,14 @@ mkdir -p notchian
 # place the 1.21.8 server.jar into notchian/
 ./extract_registries.sh
 
-# 2. Configure WiFi
-cp include/config.h.example include/config.h
-# edit include/config.h and set SSID / password
-
-# 3. Build
+# 2. Build
 idf.py set-target esp32s3
 idf.py build
 ```
+
+> WiFi credentials are configured at runtime through the web portal, so no
+> editing is required before building. `include/config.h` only holds
+> gameplay settings (view distance, max players, etc.).
 
 > Submodules must be pinned to the revisions recorded by the superproject,
 > otherwise the build fails with `mbedcrypto not built`.
@@ -229,16 +260,31 @@ esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 full.bin
 
 ## Usage
 
-1. After flashing, power cycle and watch the serial console (115200 baud):
-   ```
-   I (xxxx) esp_netif_handlers: sta ip: 192.168.1.xxx
-   Server listening on port 25565...
-   ```
-   Note the IP address.
+### 1. Configure WiFi (first boot)
 
-2. On the client, join the same 2.4 GHz network, add a server, enter that IP.
+1. Power up the board. Serial console (115200) will show it is starting the portal.
+2. On your phone, connect to hotspot **`esp32_ap_ssid`** (password `esp32_ap_pwd`).
+3. Open **http://192.168.4.1** — a page appears listing nearby WiFi networks.
+4. Pick your 2.4 GHz network, enter the password, tap **Connect**.
+5. The board saves the credentials, joins your network, and closes the hotspot.
 
-3. The first join takes several seconds while chunks are generated.
+> If the WiFi can't be reached later, the hotspot automatically comes back so
+> you can reconfigure without re-flashing.
+
+### 2. Join the game
+
+Watch the serial console for the assigned IP:
+
+```
+Got IP: 192.168.1.xxx, starting server...
+Server listening on port 25565...
+```
+
+On the client, connect to the same 2.4 GHz network, add a server with that IP.
+
+### 3. First join
+
+The first join takes several seconds while chunks are generated.
 
 ### In-game commands
 
@@ -252,6 +298,36 @@ esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 full.bin
 
 ---
 
+### Fixes applied to the WiFi portal component
+
+The upstream `esp_wifi_portal` component needed several fixes to work reliably
+on this board. All are marked with `[patch]` comments in the source:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Hangs, neither connects nor opens hotspot | `esp_wifi_connect()` returns `ESP_ERR_WIFI_SSID` with no event when no credentials are saved | check NVS first, open portal immediately |
+| Reboot loop at boot | `nvs_flash_init()` return value ignored | erase-and-retry on `NO_FREE_PAGES` / `NEW_VERSION` |
+| `abort()` when opening hotspot | WPA3 SAE was disabled in sdkconfig | re-enabled |
+| Hotspot opens but setup page dead | portal started inside the small esp_event task (2304 B stack) | moved to a dedicated 8 KB task |
+| Page unreachable | client got IP `8.8.8.8` from "enhanced captive portal" | switched to standard `192.168.4.1` DHCP |
+| `Header fields are too long` | `HTTPD_MAX_REQ_HDR_LEN` default 512 B | raised to 2048 B |
+| Page still broken after failures | `is_webserver_started` set even when start failed | return the real error |
+| Out-of-memory over time | a new 8 KB task created on every disconnect | `portal_task_pending` guard + give up after 3 failures |
+| Possible crash on success | event group deleted while another task waits on it | clear bits instead of deleting |
+
+---
+
+## Tests
+
+Pure-logic regression tests run on your PC — no hardware needed:
+
+```bash
+cd tests && ./run_tests.sh
+```
+
+Covers chunk packet sizing, VarInt encoding, block drop tables,
+item stacking/overflow, inventory slot allocation, and chunk bitmap math.
+
 ## Layout
 
 ```
@@ -262,9 +338,15 @@ esptool.py --chip esp32s3 -p /dev/ttyACM0 write_flash 0x0 full.bin
 │   ├── procedures.c   Game logic
 │   ├── worldgen.c     Terrain generation
 │   └── serialize.c    Save/load
+├── components/
+│   └── esp_wifi_portal/   Web WiFi provisioning (3rd-party, patched)
 ├── include/
-│   ├── config.h.example  Configuration template
-│   └── globals.h         Global definitions
+│   ├── config.h         Gameplay settings (no credentials needed)
+│   ├── config.h.example Configuration reference
+│   └── globals.h        Global definitions
+├── tests/
+│   ├── test_mc_logic.c  Pure-logic regression tests (runs on PC)
+│   └── run_tests.sh
 ├── mc_console.py      Local console client
 ├── partitions.csv     Partition table
 └── sdkconfig.defaults Default build configuration
