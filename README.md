@@ -29,6 +29,10 @@ memory / CPU / temperature monitoring and player management over LAN.
 > — see [Known Issues](#known-issues).
 > It is a **learning / demonstration project** and is not suitable as a production server.
 
+> 📝 **Stuck on something?** See [NOTES.md](NOTES.md) for the build pitfalls,
+> the known root causes I already ruled out, and the issues I could not solve.
+> Found a fix? Please open an issue — that knowledge is worth more than a star.
+
 ---
 
 ## Origin
@@ -210,6 +214,7 @@ component (Apache-2.0), with several fixes applied — see `Known Issues` below.
 ## Known Issues
 
 > These problems **still exist** in this build. Contributions welcome.
+> Detailed investigation notes and ruled-out hypotheses: [NOTES.md](NOTES.md).
 
 1. **Blocks may render as transparent**
    Likely caused by the protocol stream desyncing under concurrent socket
