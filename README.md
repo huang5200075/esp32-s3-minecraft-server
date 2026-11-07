@@ -13,6 +13,14 @@ memory / CPU / temperature monitoring and player management over LAN.
 
 <p align="center"><sub>Running on a real ESP32-S3 N16R8 over 2.4 GHz WiFi · FPS 132–154 on the client side</sub></p>
 
+<p align="center">
+  <a href="docs/video/esp32_mcserver_release.mp4">
+    <img src="docs/video/thumbnail.jpg" width="70%" alt="Watch the 45-second project intro (MP4, 4 MB)">
+  </a>
+</p>
+
+<p align="center"><sub>▶ 46-second project intro — click to play (MP4, 4 MB)</sub></p>
+
 > ⚠️ **Please read this first**
 >
 > This project was **heavily modified with the assistance of AI tools**, including
